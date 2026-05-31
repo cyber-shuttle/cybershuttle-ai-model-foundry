@@ -2,7 +2,7 @@
 
 **A community registry for curating, benchmarking, and running AI4Science models on Nexus and other advanced cyberinfrastructure. The goal is to turn AI4Science models into portable, optimized, reproducible, and executable scientific workflows.**
 
-[Goals](#goals) · [Model lifecycle](#how-a-model-moves-through-the-foundry) · [Get involved](#get-involved) · [Key concepts](#key-concepts) · [Example model entry](#example-model-entry) · [Issue template](#issue-template-add-ai4science-model) · [Optimization tracks](#optimization-tracks) · [Roadmap](#roadmap) · [Contributing](#contributing)
+[Goals](#goals) · [Model lifecycle](#how-a-model-moves-through-the-foundry) · [Get involved](#get-involved) · [Repository structure](#repository-structure) · [Key concepts](#key-concepts) · [Example model entry](#example-model-entry) · [Issue template](#issue-template-add-ai4science-model) · [Optimization tracks](#optimization-tracks) · [Roadmap](#roadmap) · [Contributing](#contributing)
 
 ---
 
@@ -128,7 +128,7 @@ name: MoLFormer
 ...
 ```
 
-This works out of the box in VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) and in JetBrains IDEs.
+This works out of the box in VS Code with the [YAML extension](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml).
 
 ### Model registry
 

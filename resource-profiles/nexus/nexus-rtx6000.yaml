@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=../../schemas/resource_profile.schema.json
+
+id: nexus-rtx6000
+name: Nexus — NVIDIA RTX 6000 Ada Generation
+system: Nexus
+provider: Cybershuttle / Nexus
+
+description: >
+  Single-node GPU resource profile for Nexus compute nodes equipped with
+  NVIDIA RTX 6000 Ada Generation GPUs. Well-suited for inference, LoRA
+  fine-tuning, evaluation, and interactive notebook workloads for models
+  up to ~7B parameters (with PEFT). Also suitable as a development and
+  validation environment before scaling to A100 or B200 nodes.
+
+hardware:
+  gpu:
+    model: NVIDIA RTX 6000 Ada Generation
+    memory_gb: 48
+    memory_type: GDDR6
+    count_per_node: 1  # typical; multi-GPU configs available
+    fp16_tflops: 91.1
+    int8_tops: 182.2
+    nvlink: false
+    notes: >
+      48 GB VRAM enables full fine-tuning of models up to ~3B parameters
+      in fp16, and LoRA fine-tuning of models up to ~13B parameters.
+  cpu:
+    cores_per_node: 32
+    memory_gb: 256
+  storage:
+    local_scratch_gb: 1000
+    parallel_filesystem: true
+    parallel_filesystem_notes: Nexus shared parallel filesystem (Lustre)
+
+software:
+  os: Rocky Linux 8
+  cuda: "12.1"
+  cudnn: "8.9"
+  modules:
+    - cuda/12.1
+    - python/3.11
+    - pytorch/2.2
+  container_runtime: Singularity/Apptainer
+
+scheduler:
+  type: SLURM
+  partition: gpu
+  gres: gpu:rtx6000:1
+  typical_queue_time: short
+  max_walltime: "48:00:00"
+  example_directive: "#SBATCH --partition=gpu --gres=gpu:rtx6000:1"
+
+suitable_tasks:
+  - inference (all model sizes)
+  - feature extraction
+  - LoRA / QLoRA fine-tuning (models up to ~13B)
+  - full fine-tuning (models up to ~3B in fp16)
+  - evaluation and benchmarking
+  - interactive notebook development
+
+unsuitable_tasks:
+  - full fine-tuning of models >7B parameters without PEFT
+  - multi-node distributed training (use nexus-a100 or nexus-b200)
+
+model_compatibility:
+  molformer: "full fine-tuning and inference — well within memory budget"
+  esm2_650m: "inference and LoRA fine-tuning"
+  esm2_3b: "LoRA fine-tuning only"
+
+notes: >
+  48 GB VRAM is generous for MoLFormer-XL (47M parameters, ~0.5 GB weights).
+  Full fine-tuning with batch_size=128 in fp32 is feasible.
+  For batch inference of >1M molecules, consider submitting as a SLURM
+  array job to parallelize across multiple nodes.

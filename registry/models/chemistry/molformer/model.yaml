@@ -1,0 +1,134 @@
+# yaml-language-server: $schema=../../../../../schemas/model.schema.json
+
+id: molformer
+name: MoLFormer-XL
+version: "1.0"
+
+description: >
+  MoLFormer-XL is a large-scale chemical language model pretrained on 1.1 billion
+  small molecules represented as SMILES strings (PubChem + ZINC). It uses a linear
+  attention transformer with rotary positional embeddings and masked language modeling.
+  The model is primarily intended for molecular property prediction via fine-tuning or
+  frozen-embedding feature extraction. It is not designed for molecule generation or
+  for macromolecules larger than ~200 atoms.
+
+domain:
+  - chemistry
+  - molecular-discovery
+  - drug-discovery
+
+model_family:
+  - transformer
+  - foundation-model
+  - molecular-language-model
+  - encoder
+
+tasks:
+  - inference
+  - fine-tuning
+  - evaluation
+  - feature-extraction
+  - property-prediction
+
+upstream:
+  huggingface: ibm-research/MoLFormer-XL-both-10pct
+  github: https://github.com/IBM/molformer
+  paper: https://doi.org/10.1038/s42256-022-00580-7
+  paper_title: "Large-Scale Chemical Language Representations Capture Molecular Structure and Properties"
+  license: Apache-2.0
+
+input:
+  format: SMILES
+  description: >
+    Canonical SMILES strings representing small molecules. Input sequences
+    should be tokenized at the character level. Molecules with more than
+    ~200 atoms are out of distribution and may produce unreliable results.
+  example: "CC(=O)Oc1ccccc1C(=O)O"  # aspirin
+
+output:
+  inference:
+    format: embeddings (float32 tensor, hidden_size=768)
+    description: Molecular embeddings suitable for downstream property prediction or similarity search
+  fine_tuning:
+    format: scalar or class prediction
+    description: Task-specific property values (e.g. solubility, toxicity, bioactivity)
+
+architecture:
+  type: transformer-encoder
+  attention: linear (efficient)
+  positional_encoding: rotary embeddings (relative)
+  parameters_approx: 47M
+  hidden_size: 768
+  num_layers: 12
+  num_heads: 12
+  vocab_size: 2362  # SMILES character-level tokenizer
+  max_sequence_length: 202
+
+datasets:
+  pretraining:
+    - id: pubchem
+      description: PubChem Compound database (SMILES)
+      size_approx: "110M molecules"
+    - id: zinc
+      description: ZINC15 database (SMILES)
+      size_approx: "1B molecules"
+  fine_tuning_benchmarks:
+    - id: moleculenet
+      description: MoleculeNet benchmark suite (11 tasks)
+      url: https://moleculenet.org
+    - id: chembl
+      description: ChEMBL bioactivity data
+      url: https://www.ebi.ac.uk/chembl
+
+software:
+  python: ">=3.8"
+  frameworks:
+    - pytorch>=1.10
+    - transformers>=4.20
+    - rdkit>=2022.03
+  optional:
+    - peft>=0.4  # for LoRA fine-tuning
+    - datasets   # for HuggingFace dataset loading
+  container: # see containers/domain/molformer/
+    registry: ghcr.io
+    image: cybershuttle/molformer
+    tag: latest  # placeholder — update when container is validated
+
+resource_profiles:
+  recommended:
+    - resource-profiles/nexus/nexus-rtx6000.yaml
+    - resource-profiles/nexus/nexus-a100.yaml
+  minimum:
+    gpu_memory_gb: 8   # inference, batch_size=32, fp16
+    gpu_memory_gb_finetune: 16  # full fine-tune, batch_size=32, fp32
+    gpu_memory_gb_lora: 10     # LoRA fine-tune, batch_size=64, fp16
+
+optimization_profiles:
+  recommended:
+    - optimization-profiles/portable/mixed-precision.yaml
+    - optimization-profiles/portable/lora-peft.yaml
+  experimental:
+    - optimization-profiles/nvidia/b200-fsdp-bf16.yaml
+
+cybershuttle:
+  enabled: true
+  workflow_templates:
+    - workflows/cybershuttle/templates/inference-workflow.yaml.j2
+    - workflows/cybershuttle/templates/finetune-workflow.yaml.j2
+
+readiness:
+  registry_status: registered
+  nexus_validation: untested
+  benchmark_status: not-started
+  optimization_status: not-started
+  workflow_status: candidate
+  container_status: not-started
+  last_updated: "2026-05-31"
+  notes: >
+    Model metadata complete. Pending: container build, Nexus test run,
+    benchmark execution on MoleculeNet tasks.
+
+maintainers:
+  - name: Suresh Marru
+    github: @smarru
+    affiliation: Georgia Institute of Technology

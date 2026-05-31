@@ -1,0 +1,149 @@
+# yaml-language-server: $schema=../../../../../../schemas/execution_recipe.schema.json
+
+id: molformer-finetune-lora
+name: MoLFormer-XL — LoRA fine-tuning for property prediction
+model: molformer
+task: fine-tuning
+description: >
+  Parameter-efficient fine-tuning of MoLFormer-XL using LoRA (Low-Rank Adaptation)
+  for molecular property prediction tasks. Suitable for classification (e.g. toxicity,
+  bioactivity) and regression (e.g. solubility, binding affinity) tasks.
+  LoRA trains only a small fraction of parameters (~1–2% of total), reducing GPU
+  memory requirements significantly compared to full fine-tuning.
+
+input:
+  format: CSV
+  required_columns:
+    - smiles: canonical SMILES string
+    - label: target property value (float for regression, int for classification)
+  optional_columns:
+    - split: train / valid / test (if not provided, a random 80/10/10 split is used)
+  example_datasets:
+    - MoleculeNet ESOL (regression — aqueous solubility)
+    - MoleculeNet BBBP (classification — blood-brain barrier penetration)
+    - MoleculeNet HIV (classification — HIV replication inhibition)
+
+output:
+  format: model checkpoint (.pt) + results CSV
+  description: >
+    Fine-tuned model checkpoint compatible with MoLFormer-XL architecture.
+    Results CSV contains per-epoch validation scores, test scores, best
+    validation score, and corresponding test score.
+
+steps:
+  - name: environment
+    description: Install dependencies
+    commands:
+      - pip install transformers peft rdkit datasets torch scikit-learn
+
+  - name: prepare_data
+    description: Canonicalize SMILES and create train/val/test splits
+    script: scripts/prepare_finetune_data.py
+    args:
+      input: data/raw_dataset.csv
+      smiles_col: smiles
+      label_col: label
+      output_dir: data/processed/
+      split_strategy: random  # random or scaffold
+
+  - name: finetune
+    description: Run LoRA fine-tuning
+    script: scripts/molformer_finetune_lora.py
+    args:
+      model: ibm-research/MoLFormer-XL-both-10pct
+      train_data: data/processed/train.csv
+      val_data: data/processed/val.csv
+      test_data: data/processed/test.csv
+      task_type: regression     # regression or classification
+      output_dir: checkpoints/molformer-lora/
+      # LoRA hyperparameters
+      lora_r: 8
+      lora_alpha: 16
+      lora_dropout: 0.1
+      lora_target_modules: query,value
+      # Training hyperparameters
+      epochs: 50
+      batch_size: 64
+      learning_rate: 5e-4
+      warmup_steps: 100
+      weight_decay: 0.01
+      precision: fp16
+      device: cuda
+      seed: 42
+
+  - name: evaluate
+    description: Evaluate best checkpoint on held-out test set
+    script: scripts/molformer_evaluate.py
+    args:
+      checkpoint: checkpoints/molformer-lora/best_model.pt
+      test_data: data/processed/test.csv
+      task_type: regression
+      output: results/test_results.csv
+      metrics:
+        - rmse
+        - mae
+        - r2
+
+resource_requirements:
+  gpu_memory_gb: 10
+  gpu_count: 1
+  recommended_gpu: RTX 6000 Ada, A100 40GB
+  estimated_runtime_per_epoch: "~2 min on A100 (batch_size=64, ESOL dataset ~1,100 molecules)"
+  storage_gb: 5  # model weights + checkpoints per epoch
+
+compatible_resource_profiles:
+  - resource-profiles/nexus/nexus-rtx6000.yaml
+  - resource-profiles/nexus/nexus-a100.yaml
+
+compatible_optimization_profiles:
+  - optimization-profiles/portable/lora-peft.yaml
+  - optimization-profiles/portable/mixed-precision.yaml
+
+hyperparameter_notes:
+  lora_r: >
+    Rank of LoRA update matrices. Higher rank = more parameters trained.
+    r=8 is a good default; try r=4 for smaller datasets or r=16 for larger.
+  lora_target_modules: >
+    Which attention projections to adapt. query+value is standard.
+    Adding key and/or output projections may improve performance at the
+    cost of slightly more memory.
+  batch_size: >
+    64 works well for single-GPU A100 in fp16. Reduce to 32 for RTX 6000
+    or if encountering OOM errors.
+  split_strategy: >
+    Scaffold split (Bemis-Murcko) gives a more realistic estimate of
+    generalization to novel chemical space. Random split may overestimate
+    performance. Use scaffold split for benchmarking.
+
+slurm_example: |
+  #!/bin/bash
+  #SBATCH --job-name=molformer-finetune-lora
+  #SBATCH --partition=gpu
+  #SBATCH --gres=gpu:1
+  #SBATCH --mem=32G
+  #SBATCH --time=04:00:00
+  #SBATCH --output=logs/molformer-lora-%j.out
+
+  module load cuda/12.1
+  source activate molformer
+
+  python scripts/molformer_finetune_lora.py \
+    --model ibm-research/MoLFormer-XL-both-10pct \
+    --train_data data/processed/train.csv \
+    --val_data data/processed/val.csv \
+    --test_data data/processed/test.csv \
+    --task_type regression \
+    --output_dir checkpoints/molformer-lora/ \
+    --lora_r 8 \
+    --lora_alpha 16 \
+    --epochs 50 \
+    --batch_size 64 \
+    --learning_rate 5e-4 \
+    --precision fp16
+
+notes: >
+  Results are written to checkpoints/molformer-lora/<task>/results/results_.csv.
+  Column layout: [val_score_per_epoch, test_score_per_epoch,
+  best_val_score_to_date, test_score_at_best_val_epoch].
+  For frozen-embedding baselines (no LoRA), see recipe inference-embeddings.yaml
+  and train a downstream sklearn or MLP model on the extracted embeddings.

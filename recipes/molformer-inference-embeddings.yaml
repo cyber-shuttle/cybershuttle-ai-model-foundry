@@ -1,0 +1,103 @@
+# yaml-language-server: $schema=../../../../../../schemas/execution_recipe.schema.json
+
+id: molformer-inference-embeddings
+name: MoLFormer-XL — Molecular embedding inference
+model: molformer
+task: inference
+description: >
+  Extract fixed-size molecular embeddings from SMILES strings using the
+  pretrained MoLFormer-XL model. Embeddings can be used for property
+  prediction with lightweight downstream models, molecular similarity
+  search, or visualization.
+
+input:
+  format: CSV or plain text
+  fields:
+    - name: smiles
+      type: string
+      description: Canonical SMILES string, one per line or in a 'smiles' column
+  example_file: data/example_smiles.csv
+  notes: >
+    Use RDKit to canonicalize SMILES before inference. Non-canonical or
+    invalid SMILES may degrade embedding quality.
+
+output:
+  format: NumPy array (.npy) or CSV
+  description: >
+    768-dimensional float32 embeddings, one row per input molecule.
+    Optionally includes pooling-layer representations (CLS token or
+    mean-pool over sequence).
+
+steps:
+  - name: environment
+    description: Install dependencies
+    commands:
+      - pip install transformers rdkit datasets torch
+
+  - name: canonicalize
+    description: Canonicalize and validate SMILES with RDKit
+    script: scripts/canonicalize_smiles.py
+    args:
+      input: data/input.csv
+      output: data/input_canonical.csv
+      smiles_col: smiles
+
+  - name: inference
+    description: Run MoLFormer-XL embedding inference
+    script: scripts/molformer_embed.py
+    args:
+      model: ibm-research/MoLFormer-XL-both-10pct
+      input: data/input_canonical.csv
+      output: results/embeddings.npy
+      batch_size: 64
+      device: cuda
+      precision: fp16
+      pooling: mean  # mean or cls
+
+  - name: postprocess
+    description: (Optional) Save embeddings with SMILES index for downstream use
+    script: scripts/save_embeddings_csv.py
+    args:
+      embeddings: results/embeddings.npy
+      smiles: data/input_canonical.csv
+      output: results/embeddings_with_smiles.csv
+
+resource_requirements:
+  gpu_memory_gb: 8
+  gpu_count: 1
+  recommended_gpu: RTX 6000 Ada, A100
+  estimated_throughput: "~3,000 molecules/min on A100 (fp16, batch_size=64)"
+  estimated_throughput_cpu: "~50 molecules/min on CPU (not recommended for large sets)"
+  storage_gb: 2  # model weights ~0.5 GB + data
+
+compatible_resource_profiles:
+  - resource-profiles/nexus/nexus-rtx6000.yaml
+  - resource-profiles/nexus/nexus-a100.yaml
+
+compatible_optimization_profiles:
+  - optimization-profiles/portable/mixed-precision.yaml
+
+slurm_example: |
+  #!/bin/bash
+  #SBATCH --job-name=molformer-inference
+  #SBATCH --partition=gpu
+  #SBATCH --gres=gpu:1
+  #SBATCH --mem=16G
+  #SBATCH --time=01:00:00
+  #SBATCH --output=logs/molformer-inference-%j.out
+
+  module load cuda/12.1
+  source activate molformer
+
+  python scripts/molformer_embed.py \
+    --model ibm-research/MoLFormer-XL-both-10pct \
+    --input data/input_canonical.csv \
+    --output results/embeddings.npy \
+    --batch_size 64 \
+    --device cuda \
+    --precision fp16
+
+notes: >
+  For large datasets (>1M molecules), consider batching into shards and
+  submitting as a SLURM array job. The model weights (~0.5 GB) are cached
+  after the first download from Hugging Face.

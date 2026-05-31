@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=../../../../schemas/benchmark.schema.json
+
+id: molformer-moleculenet-baseline
+name: MoLFormer-XL — MoleculeNet baseline benchmarks
+model: molformer
+model_version: "1.0"
+status: not-started
+date_run: null  # fill in when executed
+submitted_by: null  # fill in
+
+description: >
+  Benchmark template for MoLFormer-XL on the MoleculeNet suite. Covers both
+  infrastructure performance (runtime, memory, throughput) and science metrics
+  (AUROC for classification tasks, RMSE/MAE for regression tasks) using the
+  standard scaffold split protocol.
+
+environment:
+  resource_profile: resource-profiles/nexus/nexus-rtx6000.yaml
+  container: null  # fill in when container is validated
+  software:
+    python: null
+    pytorch: null
+    transformers: null
+    peft: null
+  hardware_notes: null  # e.g. "RTX 6000 Ada, 48 GB VRAM, CUDA 12.1"
+
+# ── Infrastructure metrics ────────────────────────────────────────────────────
+infrastructure:
+  inference:
+    throughput_molecules_per_min: null   # molecules/min on benchmark hardware
+    gpu_memory_peak_gb: null             # peak VRAM during inference
+    batch_size: 64
+    precision: fp16
+    notes: null
+
+  finetune_lora:
+    time_per_epoch_sec: null             # seconds per epoch, ESOL dataset
+    gpu_memory_peak_gb: null             # peak VRAM during LoRA fine-tune
+    batch_size: 64
+    precision: fp16
+    lora_r: 8
+    trainable_parameters_pct: null       # % of total parameters trained
+    notes: null
+
+# ── Science metrics — MoleculeNet (scaffold split) ────────────────────────────
+# Protocol: scaffold split, results averaged over 3 random seeds
+# Classification metric: AUROC (higher is better)
+# Regression metric: RMSE (lower is better) unless noted
+#
+# Reference results from Ross et al. 2022 (Nature Machine Intelligence)
+# are provided for comparison. Fill in Nexus results when executed.
+
+science_metrics:
+  classification:
+    - task: BBBP
+      description: Blood-brain barrier penetration
+      metric: AUROC
+      reference_result: 0.920   # Ross et al. 2022
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: HIV
+      description: HIV replication inhibition
+      metric: AUROC
+      reference_result: 0.836
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: BACE
+      description: BACE-1 binding (classification)
+      metric: AUROC
+      reference_result: 0.896
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: Tox21
+      description: Toxicity (12-task panel)
+      metric: AUROC (mean across tasks)
+      reference_result: 0.857
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: ClinTox
+      description: Clinical toxicity (2 tasks)
+      metric: AUROC (mean)
+      reference_result: 0.939
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: SIDER
+      description: Drug side-effect records (27 tasks)
+      metric: AUROC (mean)
+      reference_result: 0.680
+      nexus_result: null
+      nexus_stddev: null
+
+  regression:
+    - task: ESOL
+      description: Aqueous solubility
+      metric: RMSE
+      metric_units: log mol/L
+      reference_result: 0.558
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: FreeSolv
+      description: Hydration free energy
+      metric: RMSE
+      metric_units: kcal/mol
+      reference_result: 1.400
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: Lipophilicity
+      description: Octanol/water distribution coefficient
+      metric: RMSE
+      metric_units: log D
+      reference_result: 0.578
+      nexus_result: null
+      nexus_stddev: null
+
+    - task: QM9
+      description: Quantum mechanical properties (12 tasks)
+      metric: MAE (mean across tasks)
+      metric_units: various
+      reference_result: null   # task-specific; see paper Table 3
+      nexus_result: null
+      nexus_stddev: null
+
+# ── Cost and energy (fill in when executed) ───────────────────────────────────
+cost_and_energy:
+  inference_cost_per_1k_molecules_usd: null
+  finetune_lora_cost_per_run_usd: null
+  inference_energy_kwh_per_1k_molecules: null
+  finetune_lora_energy_kwh_per_run: null
+
+notes: >
+  Reference results are from Ross et al. (2022), Table 1 and 2, using scaffold
+  split and reporting mean over 3 seeds. Nexus results should use identical
+  protocol for fair comparison. When results are available, update status to
+  'complete' and fill in date_run, submitted_by, container, and software fields.
+
+  For the QM9 tasks, report individual task MAE values in addition to the mean
+  — the per-task breakdown is more informative than the aggregate.
