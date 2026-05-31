@@ -12,7 +12,7 @@ Core maintainers have repository-wide merge access and are responsible for schem
 
 | Name | GitHub | Affiliation | Areas |
 |---|---|---|---|
-| Suresh Marru | <!-- @smarru --> | <!-- Georgia Tech --> | All |
+| Suresh Marru | @smarru | Georgia Institute of Technology | All |
 
 ---
 
