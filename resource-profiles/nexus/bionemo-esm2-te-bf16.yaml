@@ -1,0 +1,96 @@
+# yaml-language-server: $schema=../../schemas/optimization_profile.schema.json
+
+id: bionemo-esm2-te-bf16
+name: BioNeMo ESM-2 — TransformerEngine BF16 optimization
+vendor: nvidia
+framework: bionemo
+hardware_class: nvidia-ampere-hopper-blackwell
+minimum_compute_capability: "8.0"   # Ampere (A100) and above
+
+description: >
+  NVIDIA TransformerEngine-accelerated BF16 training and inference profile for
+  ESM-2 via the BioNeMo Framework. TransformerEngine replaces standard PyTorch
+  attention and linear layers with fused CUDA kernels optimized for Tensor Core
+  throughput on Ampere, Hopper, and Blackwell GPUs.
+
+  This profile enables BioNeMo to handle batch sizes of 46 on a single A100 where
+  vanilla PyTorch (torch.compile) raises OOM errors at batch sizes larger than 16,
+  achieving 59.2% model FLOPs utilization on an NVIDIA A100.
+
+  Use this profile for A100 GPUs. For H100 or B200, prefer the FP8 profile which
+  further doubles throughput.
+
+optimizations:
+  precision: bf16
+  attention_backend: TransformerEngine (fused multi-head attention)
+  linear_backend: TransformerEngine (fused linear + layer norm)
+  sequence_packing: true      # pack variable-length sequences to reduce padding
+  size_aware_batching: true   # bionemo-size-aware-batching for efficient batch construction
+  gradient_checkpointing: optional   # reduces memory at ~33% compute overhead
+  compile: false              # TransformerEngine handles kernel fusion directly
+
+parallelism:
+  single_gpu:
+    supported: true
+    notes: "Recommended for 650M inference and PEFT fine-tuning"
+  data_parallel:
+    strategy: pytorch-fsdp2
+    supported: true
+    notes: "fsdp2 is the default for multi-GPU in bionemo-recipes"
+  tensor_parallel:
+    strategy: megatron-fsdp
+    supported: true
+    notes: "mFSDP for 3B and larger; see bionemo-recipes distributed examples"
+  pipeline_parallel:
+    supported: false
+    notes: "Not currently used in ESM-2 BioNeMo recipes"
+
+hardware_requirements:
+  minimum_gpu: NVIDIA A100 40GB (for 650M)
+  recommended_gpu: NVIDIA A100 80GB (for 3B) or H100 80GB
+  minimum_vram_650m_inference_gb: 16
+  minimum_vram_650m_lora_gb: 20
+  minimum_vram_3b_lora_gb: 48
+  cuda_version: ">=12.1"
+  driver_version: ">=535"
+  transformer_engine_version: ">=2.0"
+
+throughput_benchmarks:
+  source: "NVIDIA BioNeMo Framework documentation (docs.nvidia.com/bionemo-framework)"
+  esm2_650m_training:
+    hardware: "16x NVIDIA A100 80GB (2 nodes)"
+    batch_size: 46             # max batch size before OOM with plain PyTorch: 16
+    mfu: 59.2%
+    vs_baseline: "2.9x batch size, significantly higher throughput vs torch.compile baseline"
+  esm2_3b_training:
+    hardware: "256x NVIDIA A100 80GB (32 nodes)"
+    scaling_efficiency: 96.85%   # vs theoretical linear from single-node extrapolation
+    mfu: 60.6%
+    notes: "Near-linear scaling to 256 devices"
+
+container:
+  registry: nvcr.io
+  image: nvidia/bionemo-framework
+  tag: "2.5"
+
+recipe_references:
+  - bionemo-recipes/recipes/esm2_native_te/      # native PyTorch training loop
+  - bionemo-recipes/recipes/esm2_accelerate_te/  # HuggingFace Accelerate training
+  - bionemo-recipes/recipes/esm2_peft_te/        # PEFT fine-tuning
+
+applicable_models:
+  - esm2
+  - amplify    # AMPLIFY protein LM also uses this optimization path in BioNeMo
+  - geneformer # Geneformer uses BF16 TE path (FP8 via separate profile)
+
+notes: >
+  TransformerEngine BF16 is broadly compatible across Ampere, Hopper, and Blackwell.
+  It is the safe default for all BioNeMo ESM-2 workloads on Nexus.
+
+  For H100 or B200 hardware, see optimization-profiles/nvidia/bionemo-esm2-te-fp8.yaml
+  which adds FP8 mixed-precision for further ~2x throughput gain.
+
+  The key practical difference from vanilla PyTorch: TE's fused kernels allow
+  batch_size=46 where plain PyTorch OOMs at batch_size=16 on identical hardware —
+  this is not a precision difference but a memory efficiency difference from
+  kernel fusion and reduced intermediate tensor materialization.

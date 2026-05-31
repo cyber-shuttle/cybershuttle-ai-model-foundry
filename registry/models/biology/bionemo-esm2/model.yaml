@@ -1,0 +1,178 @@
+# yaml-language-server: $schema=../../../../../schemas/model.schema.json
+
+id: esm2
+name: ESM-2 (via BioNeMo Framework)
+version: "2.0"
+
+description: >
+  ESM-2 is a pre-trained bidirectional protein language model (BERT-style encoder)
+  trained on UniRef50/UniRef90 amino acid sequences. It produces per-residue and
+  per-sequence embeddings that achieve state-of-the-art performance on downstream
+  tasks including protein structure prediction, function annotation, and fitness
+  landscape modeling.
+
+  This registry entry covers execution via the NVIDIA BioNeMo Framework, which
+  provides TransformerEngine-accelerated (FP8/BF16) training and fine-tuning
+  recipes with significantly higher throughput than vanilla PyTorch. BioNeMo
+  includes converted checkpoints for the 650M and 3B parameter variants, both
+  ready for commercial use.
+
+  Note: ESM-2 is developed by Meta Research (Lin et al., 2023). NVIDIA BioNeMo
+  provides the optimized execution layer; NVIDIA does not own or maintain the
+  upstream model.
+
+domain:
+  - biology
+  - protein-science
+  - drug-discovery
+  - genomics
+
+model_family:
+  - transformer
+  - foundation-model
+  - protein-language-model
+  - encoder
+
+tasks:
+  - inference
+  - fine-tuning
+  - training       # continued pretraining or pretraining from scratch
+  - evaluation
+  - feature-extraction
+
+variants:
+  - id: esm2-650m
+    parameters: 650M
+    layers: 33
+    attention_heads: 20
+    hidden_size: 1280
+    checkpoint_bionemo: esm2_650M_nemo2.tar.gz
+    notes: "Single-node training feasible on 2x A100 80GB"
+
+  - id: esm2-3b
+    parameters: 3B
+    layers: 36
+    attention_heads: 40
+    hidden_size: 2560
+    checkpoint_bionemo: esm2_3B_nemo2.tar.gz
+    notes: "Multi-node training recommended; LoRA fine-tuning feasible on single 80GB GPU"
+
+upstream:
+  huggingface: facebook/esm2_t33_650M_UR50D   # 650M variant
+  huggingface_3b: facebook/esm2_t36_3B_UR50D
+  github_bionemo: https://github.com/NVIDIA/bionemo-framework
+  bionemo_docs: https://docs.nvidia.com/bionemo-framework/latest/models/ESM-2/
+  bionemo_recipes: https://github.com/NVIDIA/bionemo-framework/tree/main/bionemo-recipes/recipes
+  paper: https://doi.org/10.1126/science.ade2574
+  paper_title: "Evolutionary-scale prediction of atomic-level protein structure with a language model"
+  license: MIT (ESM-2 model weights); Apache-2.0 (BioNeMo Framework)
+
+input:
+  format: amino acid sequences (FASTA or plain text)
+  tokenization: per-residue character-level (standard ESM tokenizer, 33 tokens)
+  max_sequence_length: 1022  # residues, excluding special tokens
+  notes: >
+    Sequences longer than 1022 residues must be truncated or split.
+    The BioNeMo data pipeline includes size-aware batching (bionemo-size-aware-batching)
+    to pack variable-length sequences efficiently and minimize padding waste.
+
+output:
+  inference:
+    format: per-residue embeddings (float32 tensor, shape [seq_len, hidden_size])
+    pooled: per-sequence embedding via mean pooling over residues
+    description: Residue-level representations for structure/function prediction
+  fine_tuning:
+    format: scalar, per-residue labels, or per-sequence labels
+    description: Task-specific predictions (e.g. subcellular localization, fitness score)
+
+datasets:
+  pretraining:
+    - id: uniref50
+      description: UniRef50 clustered protein sequences
+      url: https://www.uniprot.org/uniref/
+      size_approx: "~65M sequences"
+    - id: uniref90
+      description: UniRef90 clustered protein sequences
+      url: https://www.uniprot.org/uniref/
+      size_approx: "~300M sequences"
+  fine_tuning:
+    - id: cellxgene
+      description: CellxGene single-cell expression data (for Geneformer-style tasks)
+      url: https://cellxgene.cziscience.com
+      bionemo_docs: https://docs.nvidia.com/bionemo-framework/latest/main/datasets/CELLxGENE/
+    - id: uniprot
+      description: UniProt annotated protein sequences and functional labels
+      url: https://www.uniprot.org
+      bionemo_docs: https://docs.nvidia.com/bionemo-framework/latest/main/datasets/uniprot/
+
+software:
+  python: ">=3.10"
+  frameworks:
+    - bionemo-framework>=2.5
+    - pytorch>=2.2
+    - transformer-engine>=2.0   # required for FP8 / BF16 acceleration
+    - nemo>=2.0
+  container:
+    registry: nvcr.io
+    image: nvidia/bionemo-framework
+    tag: "2.5"                  # update to latest stable at deployment time
+    pull: "docker pull nvcr.io/nvidia/bionemo-framework:2.5"
+    notes: >
+      The BioNeMo NGC container is the recommended execution environment.
+      It includes all dependencies including TransformerEngine, Megatron-LM,
+      NCCL, and CUDA toolkit. Singularity/Apptainer conversion is straightforward.
+
+  bionemo_recipe_path: bionemo-recipes/recipes/esm2_native_te/
+  bionemo_peft_recipe_path: bionemo-recipes/recipes/esm2_peft_te/
+
+resource_profiles:
+  recommended:
+    - resource-profiles/nexus/nexus-a100.yaml      # single-node 650M training / fine-tuning
+    - resource-profiles/nexus/nexus-b200.yaml      # 3B training, multi-GPU
+  minimum_inference:
+    gpu_memory_gb: 16            # 650M in fp16, batch of sequences
+  minimum_finetune_lora_650m:
+    gpu_memory_gb: 20            # LoRA on 650M, BF16
+    gpu_count: 1
+  recommended_train_650m:
+    gpu_count: 8
+    gpu_memory_gb: 80            # A100 80GB per GPU
+    nodes: 1
+  recommended_train_3b:
+    gpu_count: 16
+    gpu_memory_gb: 80            # 2x 8-GPU A100 nodes
+    nodes: 2
+
+optimization_profiles:
+  recommended:
+    - optimization-profiles/nvidia/bionemo-esm2-te-bf16.yaml
+    - optimization-profiles/nvidia/bionemo-esm2-te-fp8.yaml   # Hopper+ only
+  portable:
+    - optimization-profiles/portable/mixed-precision.yaml
+
+cybershuttle:
+  enabled: true
+  workflow_templates:
+    - workflows/cybershuttle/templates/bionemo-inference-workflow.yaml.j2
+    - workflows/cybershuttle/templates/bionemo-finetune-workflow.yaml.j2
+    - workflows/cybershuttle/templates/bionemo-pretrain-workflow.yaml.j2
+
+readiness:
+  registry_status: registered
+  nexus_validation: untested
+  benchmark_status: not-started
+  optimization_status: not-started
+  workflow_status: candidate
+  container_status: candidate       # BioNeMo NGC container available; Apptainer conversion pending
+  last_updated: "2026-05-31"
+  notes: >
+    Model metadata complete. BioNeMo NGC container available upstream.
+    Pending: Apptainer/Singularity conversion for Nexus, Nexus test run,
+    benchmark execution (see benchmarks/results/esm2/).
+    FP8 recipes require Hopper (H100) or Blackwell (B200/GB300) hardware;
+    validate CUDA compute capability before enabling.
+
+maintainers:
+  - name: Suresh Marru
+    github: # @github-handle
+    affiliation: # institution

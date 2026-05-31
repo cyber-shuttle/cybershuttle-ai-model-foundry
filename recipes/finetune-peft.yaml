@@ -1,0 +1,170 @@
+# yaml-language-server: $schema=../../../../../../schemas/execution_recipe.schema.json
+
+id: esm2-bionemo-finetune-peft
+name: ESM-2 (BioNeMo) — PEFT fine-tuning with TransformerEngine
+model: esm2
+task: fine-tuning
+description: >
+  Parameter-efficient fine-tuning (LoRA) of ESM-2 via the BioNeMo Framework,
+  accelerated with NVIDIA TransformerEngine (BF16 or FP8). This recipe uses the
+  official BioNeMo esm2_peft_te recipe as its reference implementation and wraps
+  it for Nexus/Cybershuttle execution.
+
+  BioNeMo LoRA fine-tuning achieves higher GPU utilization and lower training time
+  than full fine-tuning of ESM-2. The 650M variant can be LoRA fine-tuned on a
+  single A100 40GB GPU; the 3B variant requires a single A100 80GB or H100.
+
+upstream_recipe:
+  path: bionemo-recipes/recipes/esm2_peft_te/
+  docs: https://docs.nvidia.com/bionemo-framework/latest/main/recipes/recipes/esm2_peft_te/esm2_peft_te/
+
+variants_supported:
+  - esm2-650m    # single GPU, A100 40GB or RTX 6000 Ada 48GB
+  - esm2-3b      # single GPU, A100 80GB or H100 80GB
+
+input:
+  format: CSV with amino acid sequences and labels
+  required_columns:
+    - sequence: amino acid sequence string (max 1022 residues)
+    - label: target value (float for regression, int for classification)
+  optional_columns:
+    - split: train / val / test (random 80/10/10 if absent)
+  example_tasks:
+    - Subcellular localization (classification, 10 classes)
+    - Thermostability (regression — melting temperature)
+    - Protein fitness / DMS variant effect (regression)
+    - Solubility (binary classification)
+
+output:
+  format: NeMo2 checkpoint directory
+  description: >
+    Fine-tuned ESM-2 checkpoint in NeMo2 format, compatible with BioNeMo
+    inference and further fine-tuning. Results CSV contains per-step loss
+    and validation metrics.
+
+environment:
+  container: nvcr.io/nvidia/bionemo-framework:2.5
+  singularity_image: bionemo-framework_2.5.sif
+
+steps:
+  - name: pull_container
+    description: Convert BioNeMo NGC container to Apptainer for Nexus
+    commands:
+      - apptainer pull bionemo-framework_2.5.sif docker://nvcr.io/nvidia/bionemo-framework:2.5
+
+  - name: download_checkpoint
+    description: Download BioNeMo ESM-2 checkpoint (first run only)
+    script: |
+      python - <<'EOF'
+      from bionemo.testing.data.load import load_model_for_inference
+      checkpoint_path = load_model_for_inference("esm2_650M_nemo2")
+      print(f"Checkpoint: {checkpoint_path}")
+      EOF
+
+  - name: prepare_data
+    description: Validate sequences and prepare train/val/test splits
+    script: scripts/esm2_prepare_finetune_data.py
+    args:
+      input: data/raw_dataset.csv
+      sequence_col: sequence
+      label_col: label
+      output_dir: data/processed/
+      max_length: 1022
+      split_strategy: random   # random or identity-based clustering split
+
+  - name: finetune_peft
+    description: Run ESM-2 LoRA fine-tuning via BioNeMo PEFT recipe
+    commands:
+      - cd bionemo-framework/bionemo-recipes/recipes/esm2_peft_te/
+      - |
+        apptainer exec --nv \
+          --bind /scratch/$USER:/scratch/$USER \
+          ../../../../bionemo-framework_2.5.sif \
+          python train_peft.py \
+            --model-checkpoint ~/.cache/bionemo/esm2_650M_nemo2 \
+            --train-data /scratch/$USER/data/processed/train.csv \
+            --val-data /scratch/$USER/data/processed/val.csv \
+            --output-dir /scratch/$USER/checkpoints/esm2-peft/ \
+            --task-type classification \
+            --num-classes 10 \
+            --lora-r 16 \
+            --lora-alpha 32 \
+            --lora-dropout 0.1 \
+            --num-steps 2000 \
+            --global-batch-size 64 \
+            --learning-rate 5e-4 \
+            --precision bf16 \
+            --devices 1
+
+  - name: evaluate
+    description: Evaluate fine-tuned checkpoint on test set
+    script: scripts/esm2_bionemo_evaluate.py
+    args:
+      checkpoint: /scratch/$USER/checkpoints/esm2-peft/
+      test_data: data/processed/test.csv
+      task_type: classification
+      output: results/test_results.csv
+      metrics:
+        - accuracy
+        - f1_macro
+        - auroc
+
+resource_requirements:
+  esm2_650m_lora:
+    gpu_memory_gb: 20
+    gpu_count: 1
+    recommended_gpu: A100 40GB, A100 80GB, RTX 6000 Ada
+    estimated_time: "~30 min for 2000 steps, batch_size=64, BF16, A100 40GB"
+    trainable_parameters_pct: "~1–2%"
+  esm2_3b_lora:
+    gpu_memory_gb: 48
+    gpu_count: 1
+    recommended_gpu: A100 80GB, H100 80GB
+    estimated_time: "~90 min for 2000 steps, batch_size=32, BF16, A100 80GB"
+    trainable_parameters_pct: "~1–2%"
+  storage_gb: 20     # checkpoint + data + output checkpoints
+
+compatible_resource_profiles:
+  - resource-profiles/nexus/nexus-rtx6000.yaml   # 650M LoRA
+  - resource-profiles/nexus/nexus-a100.yaml
+
+compatible_optimization_profiles:
+  - optimization-profiles/nvidia/bionemo-esm2-te-bf16.yaml
+  - optimization-profiles/nvidia/bionemo-esm2-te-fp8.yaml   # H100/B200 only
+
+slurm_example: |
+  #!/bin/bash
+  #SBATCH --job-name=esm2-bionemo-peft
+  #SBATCH --partition=gpu
+  #SBATCH --gres=gpu:a100:1
+  #SBATCH --mem=64G
+  #SBATCH --time=02:00:00
+  #SBATCH --output=logs/esm2-peft-%j.out
+
+  module load apptainer
+  cd bionemo-framework/bionemo-recipes/recipes/esm2_peft_te/
+
+  apptainer exec --nv \
+    --bind /scratch/$USER:/scratch/$USER \
+    ../../../../bionemo-framework_2.5.sif \
+    python train_peft.py \
+      --model-checkpoint ~/.cache/bionemo/esm2_650M_nemo2 \
+      --train-data /scratch/$USER/data/processed/train.csv \
+      --val-data /scratch/$USER/data/processed/val.csv \
+      --output-dir /scratch/$USER/checkpoints/esm2-peft/ \
+      --task-type classification \
+      --num-steps 2000 \
+      --global-batch-size 64 \
+      --learning-rate 5e-4 \
+      --precision bf16
+
+notes: >
+  num_steps rather than epochs is the BioNeMo/Megatron training paradigm.
+  To approximate N epochs: num_steps = (N * dataset_size) / global_batch_size.
+
+  FP8 training (--precision fp8) is available on Hopper (H100, compute capability ≥ 9.0)
+  and Blackwell (B200/GB300, compute capability ≥ 10.0) only. RTX 6000 Ada has compute
+  capability 8.9 — use BF16 on that hardware.
+
+  For multi-GPU LoRA fine-tuning of ESM-2 3B on 2+ GPUs, add --devices N and
+  --strategy fsdp2 to the training command. See BioNeMo distributed training docs.

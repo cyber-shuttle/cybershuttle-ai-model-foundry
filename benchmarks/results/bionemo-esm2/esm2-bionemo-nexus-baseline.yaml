@@ -1,0 +1,174 @@
+# yaml-language-server: $schema=../../../../schemas/benchmark.schema.json
+
+id: esm2-bionemo-nexus-baseline
+name: ESM-2 (BioNeMo) — Nexus infrastructure and science benchmarks
+model: esm2
+model_version: "2.0"
+status: not-started
+date_run: null       # fill in when executed
+submitted_by: null   # fill in
+
+description: >
+  Benchmark template for ESM-2 via BioNeMo Framework on Nexus hardware. Covers:
+  1. Infrastructure benchmarks — throughput, memory, MFU vs PyTorch baseline
+  2. Science benchmarks — downstream task performance on standard protein ML benchmarks
+
+  Reference numbers from NVIDIA BioNeMo documentation are pre-populated for comparison.
+  Nexus result fields are null placeholders to be filled in after execution.
+
+environment:
+  resource_profile: resource-profiles/nexus/nexus-a100.yaml
+  optimization_profile: optimization-profiles/nvidia/bionemo-esm2-te-bf16.yaml
+  container: null      # fill in: nvcr.io/nvidia/bionemo-framework:<version>
+  software:
+    bionemo_version: null
+    pytorch_version: null
+    transformer_engine_version: null
+    cuda_version: null
+  hardware_notes: null  # e.g. "2x 8-GPU A100 80GB nodes, CUDA 12.1"
+
+# ── Infrastructure benchmarks ─────────────────────────────────────────────────
+
+infrastructure:
+  # Comparing BioNeMo+TE vs vanilla PyTorch (torch.compile) on identical hardware
+  # Reference: NVIDIA BioNeMo Framework documentation
+  # https://docs.nvidia.com/bionemo-framework/latest/models/ESM-2/
+
+  esm2_650m_single_node:
+    hardware_ref: "16x NVIDIA A100 80GB (2 nodes)"
+    hardware_nexus: null
+    precision: bf16
+
+    bionemo_te:
+      max_batch_size: 46
+      mfu_pct: 59.2
+      throughput_sequences_per_sec: null  # fill in from Nexus run
+
+    pytorch_baseline:
+      max_batch_size: 16     # OOM above this on A100 with torch.compile
+      mfu_pct: null          # fill in for comparison
+      notes: "Pure PyTorch (torch.compile) raises OOM for batch_size > 16 on A100"
+
+    nexus_bionemo_te:
+      max_batch_size: null
+      mfu_pct: null
+      throughput_sequences_per_sec: null
+      gpu_memory_peak_gb: null
+      notes: null
+
+  esm2_3b_multi_node:
+    hardware_ref: "256x NVIDIA A100 80GB (32 nodes)"
+    hardware_nexus: null
+    precision: bf16
+
+    bionemo_te:
+      scaling_efficiency_pct: 96.85   # vs theoretical linear from single-node
+      mfu_pct: 60.6
+
+    nexus_bionemo_te:
+      nodes: null
+      gpus_total: null
+      scaling_efficiency_pct: null
+      mfu_pct: null
+      notes: null
+
+  inference_650m:
+    precision: bf16
+    batch_size: 32
+    mean_sequence_length_residues: 300
+    throughput_sequences_per_min_ref: null   # no published reference; fill in on Nexus
+    throughput_sequences_per_min_nexus: null
+    gpu_memory_peak_gb_nexus: null
+
+# ── Science benchmarks ────────────────────────────────────────────────────────
+# Standard protein ML downstream tasks
+# Reference results from Lin et al. (2023), Science, and ESM-2 model card
+# Fine-tuning protocol: LoRA (r=16) unless noted; BF16; BioNeMo PEFT recipe
+
+science_metrics:
+
+  subcellular_localization:
+    task: DeepLoc-2 subcellular localization (10 classes)
+    dataset: DeepLoc-2
+    url: https://services.healthtech.dtu.dk/services/DeepLoc-2.0/
+    metric: accuracy
+    split: standard train/test
+
+    esm2_650m:
+      reference_result: null   # fill in from literature or your run
+      nexus_result: null
+      nexus_stddev: null
+
+    esm2_3b:
+      reference_result: null
+      nexus_result: null
+      nexus_stddev: null
+
+  remote_homology:
+    task: Remote homology detection (fold-level)
+    dataset: SCOP (Fold classification)
+    metric: top-1 accuracy
+    split: superfamily split
+
+    esm2_650m:
+      reference_result: null
+      nexus_result: null
+      nexus_stddev: null
+
+    esm2_3b:
+      reference_result: null
+      nexus_result: null
+      nexus_stddev: null
+
+  contact_prediction:
+    task: Long-range residue contact prediction
+    dataset: ProteinNet (CASP12)
+    metric: "L/5 long-range precision (top-L/5 predictions)"
+    split: standard
+
+    esm2_650m:
+      reference_result: null
+      nexus_result: null
+      nexus_stddev: null
+
+    esm2_3b:
+      reference_result: null
+      nexus_result: null
+      nexus_stddev: null
+
+  fitness_dms:
+    task: Deep mutational scanning variant effect prediction
+    dataset: ProteinGym (substitutions benchmark)
+    url: https://proteingym.org
+    metric: Spearman correlation (mean across DMS assays)
+    protocol: zero-shot log-likelihood scoring (no fine-tuning)
+
+    esm2_650m:
+      reference_result: null
+      nexus_result: null
+      notes: "Zero-shot; no fine-tuning required"
+
+    esm2_3b:
+      reference_result: null
+      nexus_result: null
+      notes: "Zero-shot; larger models generally score higher on DMS benchmarks"
+
+# ── Cost and energy ───────────────────────────────────────────────────────────
+cost_and_energy:
+  inference_650m_cost_per_1k_sequences_usd: null
+  finetune_peft_650m_cost_per_run_usd: null
+  inference_650m_energy_kwh_per_1k_sequences: null
+  finetune_peft_650m_energy_kwh_per_run: null
+
+notes: >
+  Infrastructure reference numbers (batch sizes, MFU, scaling efficiency) are from
+  NVIDIA BioNeMo Framework documentation at docs.nvidia.com/bionemo-framework.
+  Nexus numbers should be collected using the BioNeMo esm2_native_te recipe under
+  identical conditions (same container version, same batch size, same precision).
+
+  For science benchmarks, prioritize DeepLoc-2 and ProteinGym DMS as they are the
+  most widely reported in current protein LM literature and allow direct comparison
+  with ESM-2, ESM-3, ProtTrans, and other models.
+
+  When results are available: update status to 'complete', fill date_run,
+  submitted_by, container version, and software fields.

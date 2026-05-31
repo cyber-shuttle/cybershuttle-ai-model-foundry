@@ -1,0 +1,138 @@
+# yaml-language-server: $schema=../../../../../../schemas/execution_recipe.schema.json
+
+id: esm2-bionemo-inference-embeddings
+name: ESM-2 (BioNeMo) — Protein embedding inference
+model: esm2
+task: inference
+description: >
+  Extract per-residue and per-sequence protein embeddings from amino acid
+  sequences using ESM-2 via the BioNeMo Framework. The BioNeMo execution path
+  uses TransformerEngine-accelerated layers (BF16) for significantly higher
+  throughput than vanilla PyTorch. Embeddings are suitable for protein structure
+  prediction, function annotation, fitness modeling, and similarity search.
+
+variants_supported:
+  - esm2-650m    # recommended for single-GPU and interactive workloads
+  - esm2-3b      # higher quality embeddings; requires more GPU memory
+
+input:
+  format: FASTA or plain text (one sequence per line)
+  tokenization: BioNeMo ESM tokenizer (handled automatically)
+  max_length: 1022 residues
+  notes: >
+    Long sequences (>1022 residues) must be truncated or chunked before
+    inference. BioNeMo's size-aware batching groups sequences by length
+    to minimize padding and maximize throughput.
+
+output:
+  per_residue_embeddings:
+    format: PyTorch tensor (.pt) or NumPy array (.npy)
+    shape: "[n_sequences, seq_len, hidden_size]"
+    hidden_size: 1280   # 650M; 2560 for 3B
+  per_sequence_embeddings:
+    format: NumPy array (.npy)
+    shape: "[n_sequences, hidden_size]"
+    pooling: mean over residue dimension (excluding padding)
+
+environment:
+  container: nvcr.io/nvidia/bionemo-framework:2.5
+  singularity_convert: >
+    singularity pull bionemo-framework_2.5.sif
+    docker://nvcr.io/nvidia/bionemo-framework:2.5
+
+steps:
+  - name: pull_container
+    description: Pull BioNeMo NGC container and convert to Apptainer/Singularity for Nexus
+    commands:
+      - apptainer pull bionemo-framework_2.5.sif docker://nvcr.io/nvidia/bionemo-framework:2.5
+
+  - name: download_checkpoint
+    description: Download BioNeMo ESM-2 650M checkpoint
+    script: |
+      python - <<'EOF'
+      from bionemo.esm2.model.finetune.lightning_module import ESM2FineTuneSeqModel
+      from bionemo.core.utils.dtypes import get_autocast_dtype
+      from bionemo.testing.data.load import load_model_for_inference
+      # Downloads checkpoint to ~/.cache/bionemo/ on first run
+      checkpoint_path = load_model_for_inference("esm2_650M_nemo2")
+      print(f"Checkpoint at: {checkpoint_path}")
+      EOF
+
+  - name: prepare_sequences
+    description: Validate and format input FASTA for BioNeMo
+    script: scripts/esm2_prepare_fasta.py
+    args:
+      input: data/proteins.fasta
+      output: data/proteins_validated.fasta
+      max_length: 1022
+      truncate: true       # truncate sequences over max_length
+      remove_gaps: true    # remove alignment gaps if present
+
+  - name: inference
+    description: Run ESM-2 embedding inference via BioNeMo
+    script: scripts/esm2_bionemo_embed.py
+    args:
+      checkpoint: ~/.cache/bionemo/esm2_650M_nemo2
+      input: data/proteins_validated.fasta
+      output_dir: results/embeddings/
+      batch_size: 32
+      precision: bf16
+      pooling: mean        # mean, cls, or none (per-residue)
+      device: cuda
+
+  - name: postprocess
+    description: (Optional) Export embeddings to CSV or HDF5 for downstream use
+    script: scripts/export_embeddings.py
+    args:
+      embeddings_dir: results/embeddings/
+      output_format: hdf5  # hdf5 or csv
+      output: results/esm2_embeddings.h5
+
+resource_requirements:
+  esm2_650m:
+    gpu_memory_gb: 16
+    gpu_count: 1
+    recommended_gpu: A100 40GB or RTX 6000 Ada
+    estimated_throughput: "~500 sequences/min (mean length 300 residues, BF16, A100)"
+  esm2_3b:
+    gpu_memory_gb: 40
+    gpu_count: 1
+    recommended_gpu: A100 80GB or H100
+    estimated_throughput: "~120 sequences/min (mean length 300 residues, BF16, A100 80GB)"
+  storage_gb: 10     # checkpoint (~1.5 GB 650M, ~6 GB 3B) + data + results
+
+compatible_resource_profiles:
+  - resource-profiles/nexus/nexus-rtx6000.yaml   # 650M only
+  - resource-profiles/nexus/nexus-a100.yaml
+
+compatible_optimization_profiles:
+  - optimization-profiles/nvidia/bionemo-esm2-te-bf16.yaml
+
+slurm_example: |
+  #!/bin/bash
+  #SBATCH --job-name=esm2-bionemo-inference
+  #SBATCH --partition=gpu
+  #SBATCH --gres=gpu:a100:1
+  #SBATCH --mem=64G
+  #SBATCH --time=02:00:00
+  #SBATCH --output=logs/esm2-inference-%j.out
+
+  module load apptainer
+
+  apptainer exec --nv \
+    --bind /scratch/$USER:/scratch/$USER \
+    bionemo-framework_2.5.sif \
+    python scripts/esm2_bionemo_embed.py \
+      --checkpoint ~/.cache/bionemo/esm2_650M_nemo2 \
+      --input data/proteins_validated.fasta \
+      --output_dir results/embeddings/ \
+      --batch_size 32 \
+      --precision bf16
+
+notes: >
+  BioNeMo's TransformerEngine-accelerated inference achieves substantially higher
+  throughput than vanilla HuggingFace inference for the same hardware. For datasets
+  >100K sequences, split the FASTA into shards and run as a SLURM array job.
+
+  FP8 inference is available on Hopper (H100) and Blackwell (B200/GB300) GPUs only
+  (CUDA compute capability ≥ 9.0). For RTX 6000 Ada (compute capability 8.9), use BF16.
