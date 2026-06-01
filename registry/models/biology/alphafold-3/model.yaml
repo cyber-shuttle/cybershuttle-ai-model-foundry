@@ -1,0 +1,229 @@
+# yaml-language-server: $schema=../../../../../schemas/model.schema.json
+
+id: alphafold3
+name: AlphaFold 3
+version: "3.0.1"
+
+description: >
+  AlphaFold 3 is a structure prediction model developed by Google DeepMind and
+  Isomorphic Labs. It predicts the 3D structure of proteins and their interactions
+  with DNA, RNA, small molecule ligands, ions, and covalent modifications — a
+  major expansion over AlphaFold 2, which was limited to proteins only.
+
+  AlphaFold 3 replaces the Evoformer architecture with a diffusion-based model
+  (Diffusion Transformer) that operates directly on atomic coordinates, enabling
+  unified structure prediction across molecular modalities.
+
+  The pipeline has two stages with different hardware profiles:
+    1. Data pipeline — CPU-intensive MSA and template search using Jackhmmer,
+       Nhmmer, and HHSearch against large genetic databases (~1 TB).
+    2. Model inference — GPU-intensive structure prediction on the diffusion model.
+  These stages can be run separately to optimize resource scheduling.
+
+  ⚠️  LICENSE AND ACCESS NOTICE (read before deploying)
+  The source code is licensed CC-BY-NC-SA 4.0 (non-commercial only).
+  Model weights are separately access-gated and subject to a stricter
+  Terms of Use: non-commercial use only, by non-commercial organizations
+  (universities, non-profits, research institutes, government bodies).
+  Each user must request access individually from Google DeepMind — weights
+  cannot be shared, even within an organization, except as permitted by the Terms.
+  Commercial use is prohibited. Outputs cannot be used to train competing
+  structure prediction models.
+  Full terms: https://github.com/google-deepmind/alphafold3/blob/main/WEIGHTS_TERMS_OF_USE.md
+
+domain:
+  - biology
+  - structural-biology
+  - drug-discovery
+  - protein-science
+
+model_family:
+  - diffusion-transformer
+  - structure-prediction
+  - foundation-model
+  - multi-modal-biomolecular
+
+tasks:
+  - inference    # structure prediction only — no training or fine-tuning of weights
+
+modalities_supported:
+  - proteins
+  - DNA
+  - RNA
+  - small molecule ligands
+  - ions
+  - covalent modifications
+  - protein-ligand complexes
+  - protein-DNA complexes
+  - protein-RNA complexes
+  - protein-protein complexes (multimers)
+
+upstream:
+  github: https://github.com/google-deepmind/alphafold3
+  paper: https://doi.org/10.1038/s41586-024-07487-w
+  paper_title: "Accurate structure prediction of biomolecular interactions with AlphaFold 3"
+  server: https://alphafoldserver.com
+  model_access_form: https://github.com/google-deepmind/alphafold3?tab=readme-ov-file#obtaining-model-parameters
+  license_source: CC-BY-NC-SA 4.0
+  license_weights: AlphaFold 3 Model Parameters Terms of Use (non-commercial, access-gated)
+  license_output: AlphaFold 3 Output Terms of Use (non-commercial)
+
+input:
+  format: JSON (fold input format)
+  description: >
+    Structured JSON describing the molecular system to predict. Specifies protein
+    sequences (as amino acid strings), nucleic acid sequences, ligand SMILES,
+    ions, and covalent modifications. Multiple chains and complex types can be
+    combined in a single input.
+  token_limit: 5120   # maximum tokens on A100/H100 80GB
+  token_definition: >
+    Tokens correspond roughly to residues (proteins/RNA/DNA) or heavy atoms
+    (small molecules). Large complexes or long sequences approach the 5,120 limit.
+  example: |
+    {
+      "name": "2PV7",
+      "sequences": [
+        {
+          "protein": {
+            "id": ["A", "B"],
+            "sequence": "GMRESYANENQFGFKTINSDIHKIVIVGGYGKLGGLFARYLRASGYPISILDREDWAVAESILANADVVIVSVPINLTLETINEVNAKKIAPLKIGELKMESPEDRIGMNNHN"
+          }
+        }
+      ],
+      "modelSeeds": [1],
+      "dialect": "alphafold3",
+      "version": 2
+    }
+
+output:
+  format: mmCIF + JSON confidence scores
+  files:
+    - model.cif: predicted 3D structure in mmCIF format
+    - summary_confidences.json: per-chain and per-residue confidence metrics
+    - full_data.json: full confidence data including pairwise error
+  confidence_metrics:
+    plddt: per-residue local confidence (0–100, higher is better)
+    ptm: predicted TM-score (global fold confidence, 0–1)
+    iptm: interface predicted TM-score (complex confidence, 0–1)
+    pae: predicted aligned error matrix (residue-pair distance uncertainty)
+  notes: >
+    Outputs must be cited per AlphaFold 3 Output Terms of Use:
+    Abramson et al., Nature (2024). Outputs cannot be used to train competing
+    structure prediction models.
+
+pipeline:
+  stage_1_data_pipeline:
+    description: MSA construction and template search (CPU/RAM intensive)
+    tools:
+      - jackhmmer    # protein MSA search against UniRef90, MGnify, UniClust30
+      - nhmmer       # RNA/DNA MSA search against RFam, NT databases
+      - hmmbuild     # HMM profile construction
+      - hmmsearch    # HMM-based template search
+    databases_required:
+      - uniref90:     ~68 GB
+      - mgnify:       ~120 GB
+      - uniclust30:   ~46 GB
+      - pdb_seqres:   ~0.5 GB
+      - rfam:         ~4 GB
+      - nt:           ~170 GB (RNA/DNA only)
+      - pdb_mmcif:    ~230 GB
+    total_db_size_gb: ~1000   # SSD strongly recommended
+    cpu_minimum: 12
+    cpu_recommended_sharded: 128   # for maximally parallel shard-based search
+    ram_minimum_gb: 64
+    ram_recommended_gb: 170
+    can_run_separately: true  # run ahead of GPU inference, cache MSA results
+
+  stage_2_model_inference:
+    description: Diffusion-based structure prediction (GPU intensive)
+    gpu_required: true
+    tokens_per_gpu_80gb: 5120
+    can_run_separately: true
+
+datasets:
+  databases:
+    - id: uniref90
+      description: UniRef90 clustered protein sequences for MSA
+      url: https://www.uniprot.org/uniref/
+    - id: mgnify
+      description: MGnify metagenomics sequences
+      url: https://www.ebi.ac.uk/metagenomics/
+    - id: uniclust30
+      description: UniClust30 for template search
+      url: https://uniclust.mmseqs.com
+    - id: pdb_mmcif
+      description: Protein Data Bank structures for template search
+      url: https://www.rcsb.org
+    - id: rfam
+      description: RNA families database for RNA MSA
+      url: https://rfam.org
+    - id: nt
+      description: NCBI Nucleotide database for DNA/RNA MSA
+      url: https://www.ncbi.nlm.nih.gov/nucleotide/
+
+software:
+  python: ">=3.11"
+  os: Linux only (no Windows or macOS support)
+  dependencies:
+    - jax>=0.4.25
+    - haiku
+    - rdkit
+    - hmmer (jackhmmer, nhmmer, hmmbuild, hmmsearch)
+    - kalign3
+  container:
+    registry: ghcr.io
+    image: google-deepmind/alphafold3
+    notes: >
+      Official Docker image available. For Nexus/Apptainer, convert with:
+      apptainer pull alphafold3.sif docker://ghcr.io/google-deepmind/alphafold3:<version>
+      Database files must be mounted separately; do not include in image.
+
+resource_profiles:
+  recommended:
+    - resource-profiles/nexus/nexus-a100.yaml
+    - resource-profiles/nexus/nexus-h100.yaml
+  notes: >
+    RTX 6000 Ada (48 GB) can run smaller inputs. A100/H100 80 GB are officially
+    supported and validated. Compute Capability >= 8.0 required (no V100/P100).
+
+optimization_profiles:
+  recommended:
+    - optimization-profiles/portable/alphafold3-two-stage.yaml
+  notes: >
+    Key optimization strategy: decouple stage 1 (data pipeline) from stage 2
+    (model inference). Run stage 1 on CPU-only nodes, cache MSA results,
+    then run stage 2 on GPU nodes. This avoids tying up expensive GPU nodes
+    during multi-hour MSA searches.
+
+cybershuttle:
+  enabled: true
+  workflow_templates:
+    - workflows/cybershuttle/templates/alphafold3-inference-workflow.yaml.j2
+    - workflows/cybershuttle/templates/alphafold3-twostage-workflow.yaml.j2
+
+readiness:
+  registry_status: registered
+  nexus_validation: untested
+  benchmark_status: not-started
+  optimization_status: not-started
+  workflow_status: candidate
+  container_status: candidate    # official Docker image available; Apptainer conversion pending
+  last_updated: "2026-05-31"
+  notes: >
+    ⚠️  MODEL WEIGHT ACCESS REQUIRED before Nexus deployment.
+    Each Nexus user or site admin must individually request weight access from
+    Google DeepMind via the form at:
+    https://github.com/google-deepmind/alphafold3?tab=readme-ov-file#obtaining-model-parameters
+    Weights cannot be stored centrally and shared with all users (per Terms of Use).
+    Recommend coordinating a site-level access policy with Nexus administrators.
+
+    Database footprint (~1 TB) requires dedicated storage allocation on Nexus.
+    SSD storage strongly recommended for database queries.
+
+    Pending: Apptainer conversion, Nexus storage allocation, weight access
+    coordination, test inference run, benchmark execution.
+
+maintainers:
+  - name: Suresh Marru
+    github: # @github-handle
+    affiliation: # institution

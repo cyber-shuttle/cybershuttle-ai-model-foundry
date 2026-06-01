@@ -1,0 +1,186 @@
+# yaml-language-server: $schema=../../../../schemas/benchmark.schema.json
+
+id: alphafold3-nexus-baseline
+name: AlphaFold 3 — Nexus infrastructure and structure quality benchmarks
+model: alphafold3
+model_version: "3.0.1"
+status: not-started
+date_run: null
+submitted_by: null
+
+description: >
+  Benchmark template for AlphaFold 3 on Nexus hardware. Covers:
+  1. Infrastructure benchmarks — stage 1 (data pipeline) and stage 2 (inference)
+     runtime and memory on Nexus A100/H100 hardware
+  2. Structure quality benchmarks — pLDDT, pTM, and RMSD on standard validation sets
+
+  Reference throughput numbers from NVIDIA's comparison of A100 80GB vs the
+  16x A100 40GB setup used in the original AlphaFold 3 paper are pre-populated
+  where available. Nexus result fields are null placeholders.
+
+  ⚠️  Note: AlphaFold 3 supports inference only. There are no training or
+  fine-tuning benchmarks — the model weights are fixed and access-gated.
+
+environment:
+  resource_profile: resource-profiles/nexus/nexus-a100.yaml
+  container: null       # fill in: ghcr.io/google-deepmind/alphafold3:<version>
+  software:
+    alphafold3_version: null
+    jax_version: null
+    cuda_version: null
+  hardware_notes: null  # e.g. "A100 80GB, CUDA 12.1, 64 GB RAM, SSD databases"
+
+# ── Infrastructure benchmarks ─────────────────────────────────────────────────
+
+infrastructure:
+  # Reference: NVIDIA documentation comparing single A100/H100 80GB vs
+  # the 16-GPU A100 40GB setup used in the original AF3 paper.
+  # Single A100/H100 80GB achieves 2-5x better GPU-second efficiency.
+
+  stage1_data_pipeline:
+    description: MSA construction and template search (CPU only)
+    test_target: single protein chain, ~300 residues
+    cpu_cores: 32
+    ram_gb: 128
+
+    nexus_result:
+      runtime_min: null
+      peak_ram_gb: null
+      notes: null
+
+  stage2_inference:
+    description: Diffusion-based structure prediction (GPU)
+    precision: bfloat16
+
+    small_protein:
+      token_count: ~300       # single chain, ~300 residues
+      gpu: A100 80GB
+      runtime_min_ref: null   # no published reference for this specific case; fill in
+      runtime_min_nexus: null
+      peak_vram_gb_nexus: null
+
+    medium_complex:
+      token_count: ~1000      # protein dimer or protein-ligand complex
+      gpu: A100 80GB
+      runtime_min_ref: null
+      runtime_min_nexus: null
+      peak_vram_gb_nexus: null
+
+    large_complex:
+      token_count: ~5000      # near the 5120 token limit
+      gpu: A100 80GB
+      runtime_min_ref: null
+      runtime_min_nexus: null
+      peak_vram_gb_nexus: null
+      notes: >
+        Use --flash_attention_implementation=triton for inputs approaching
+        the 5,120 token limit to reduce peak VRAM.
+
+  efficiency_note: >
+    NVIDIA documentation reports the single A100/H100 80GB setup achieves
+    2-5x better GPU-second efficiency compared to the 16x A100 40GB configuration
+    used in the original AlphaFold 3 paper. Nexus A100 80GB nodes are therefore
+    the recommended hardware for cost-effective inference.
+
+# ── Structure quality benchmarks ─────────────────────────────────────────────
+# Reference results from Abramson et al. (2024), Nature, Table 1 and Extended Data
+# Nexus results should use identical validation targets for fair comparison.
+
+science_metrics:
+
+  protein_monomer:
+    task: Single-chain protein structure prediction
+    dataset: CASP15 targets (held-out from training)
+    metric: TM-score (vs experimental structure)
+    protocol: >
+      Standard AlphaFold 3 inference with default seeds (5 predictions,
+      report best by pLDDT). Compare to deposited PDB structures.
+
+    alphafold3_paper:
+      median_tm_score: null    # see paper Table 1; fill in specific value
+      notes: "AF3 surpasses AlphaFold 2 and ESMFold on CASP15"
+
+    nexus_result:
+      median_tm_score: null
+      n_targets: null
+      notes: null
+
+  protein_dna_complex:
+    task: Protein-DNA complex structure prediction
+    dataset: PDB recent structures (post training cutoff)
+    metric: interface RMSD (Å)
+    notes: >
+      AF3 is the first widely accessible model to predict protein-DNA
+      complexes with high accuracy. A key differentiator from AF2.
+
+    alphafold3_paper:
+      median_interface_rmsd_angstrom: null  # see paper Extended Data
+      notes: "AF3 outperforms all prior methods on protein-DNA interface accuracy"
+
+    nexus_result:
+      median_interface_rmsd_angstrom: null
+      n_targets: null
+
+  protein_ligand_complex:
+    task: Protein-small molecule ligand pose prediction
+    dataset: PoseBusters benchmark set
+    metric: >
+      Fraction of predictions with RMSD < 2Å to crystal pose AND
+      passing PoseBusters validity checks (no steric clashes, valid
+      bond lengths, etc.)
+    url: https://github.com/maabuu/posebusters
+
+    alphafold3_paper:
+      fraction_rmsd_lt2_and_valid: null   # see paper Table 2; fill in
+      notes: "AF3 achieves state-of-the-art on PoseBusters, outperforming docking tools"
+
+    nexus_result:
+      fraction_rmsd_lt2_and_valid: null
+      n_targets: null
+
+  protein_rna_complex:
+    task: Protein-RNA complex structure prediction
+    dataset: PDB recent structures (post training cutoff)
+    metric: interface RMSD (Å)
+
+    alphafold3_paper:
+      median_interface_rmsd_angstrom: null
+
+    nexus_result:
+      median_interface_rmsd_angstrom: null
+      n_targets: null
+
+  confidence_calibration:
+    task: pLDDT and pTM score calibration
+    description: >
+      Measure correlation between predicted confidence (pLDDT, pTM) and
+      actual structural accuracy (GDT-TS, TM-score) on held-out structures.
+    metric: Pearson correlation (predicted pLDDT vs actual Ca RMSD)
+
+    nexus_result:
+      plddt_vs_rmsd_pearson_r: null
+      notes: null
+
+# ── Cost and energy ───────────────────────────────────────────────────────────
+cost_and_energy:
+  inference_cost_per_prediction_usd: null     # GPU-hours × node rate
+  stage1_energy_kwh_per_prediction: null
+  stage2_energy_kwh_per_prediction: null
+  notes: >
+    Cost and energy estimates require Nexus accounting data.
+    Stage 1 CPU jobs and Stage 2 GPU jobs should be tracked separately
+    as they use different resource types with different costs.
+
+notes: >
+  AlphaFold 3 is inference-only — no training or fine-tuning benchmarks apply.
+  All structure quality reference numbers should come from Abramson et al. (2024),
+  Nature, doi:10.1038/s41586-024-07487-w, which must be cited in any publication
+  using AF3 outputs.
+
+  For the PoseBusters benchmark, clone https://github.com/maabuu/posebusters
+  and follow its evaluation protocol. Report both RMSD < 2Å rate and the
+  combined RMSD + validity rate, as the latter is a stricter and more
+  meaningful metric for drug discovery applications.
+
+  Compliance: all nexus_result entries must note the AF3 model version and
+  that outputs are subject to AlphaFold 3 Output Terms of Use.

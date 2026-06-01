@@ -1,0 +1,257 @@
+# yaml-language-server: $schema=../../../../../../schemas/execution_recipe.schema.json
+
+id: alphafold3-inference-twostage
+name: AlphaFold 3 — Two-stage structure prediction (data pipeline + model inference)
+model: alphafold3
+task: inference
+description: >
+  Full AlphaFold 3 structure prediction pipeline, split into two separately
+  schedulable stages for efficient HPC resource use:
+
+    Stage 1 (data pipeline): CPU-intensive MSA construction and template search.
+    Can run on CPU-only nodes; takes 30 min – several hours depending on sequence
+    depth and database parallelism. Results are cached.
+
+    Stage 2 (model inference): GPU-intensive diffusion-based structure prediction.
+    Runs in minutes on A100/H100 80 GB once MSA is available.
+
+  Splitting stages prevents GPU nodes from sitting idle during MSA searches and
+  allows Stage 1 to be reused across multiple prediction runs for the same sequences.
+
+prerequisites:
+  - AlphaFold 3 model weights obtained from Google DeepMind (access-gated)
+    Request form: https://github.com/google-deepmind/alphafold3?tab=readme-ov-file#obtaining-model-parameters
+  - Genetic databases downloaded (~1 TB, SSD recommended)
+    Script: fetch_databases.sh (included in AlphaFold 3 repo)
+  - Apptainer image built from official Docker image
+
+input:
+  format: JSON (AlphaFold 3 fold input format, dialect "alphafold3", version 2)
+  description: >
+    JSON file describing the molecular system: protein sequences, nucleic acids,
+    small molecule SMILES, ions, covalent modifications. Multiple chains and
+    complex types can be combined.
+  token_limit: 5120 tokens on A100/H100 80 GB
+  example_file: examples/fold_input.json
+  notes: >
+    For large complexes approaching 5,120 tokens, use --flash_attention_implementation
+    to reduce peak memory. For inputs exceeding 5,120 tokens, the prediction will
+    fail with an OOM error — split the complex if possible.
+
+output:
+  per_prediction:
+    - model.cif: 3D structure in mmCIF format
+    - summary_confidences.json: pLDDT, pTM, ipTM per chain
+    - full_data.json: full PAE matrix and per-residue confidence
+  directory_structure: |
+    <output_dir>/
+    └── <job_name>/
+        ├── <job_name>_model.cif
+        ├── <job_name>_summary_confidences.json
+        └── <job_name>_full_data.json
+
+environment:
+  container: ghcr.io/google-deepmind/alphafold3:latest
+  singularity_convert: >
+    apptainer pull alphafold3.sif docker://ghcr.io/google-deepmind/alphafold3:latest
+  model_parameters_dir: /path/to/af3_model_parameters/   # user-specific, per ToU
+  database_dir: /path/to/af3_databases/                  # shared Nexus allocation (~1 TB)
+
+steps:
+  - name: setup_databases
+    description: >
+      Download AlphaFold 3 genetic databases (~1 TB). One-time setup per Nexus
+      installation. Should be run by Nexus administrators to a shared storage location.
+      SSD strongly recommended; HDD will significantly slow Stage 1.
+    commands:
+      - bash fetch_databases.sh /path/to/af3_databases/
+    notes: >
+      Database download takes several hours. Total size ~1 TB uncompressed.
+      Coordinate with Nexus admins for shared database allocation.
+
+  - name: build_container
+    description: Convert official Docker image to Apptainer for Nexus
+    commands:
+      - apptainer pull alphafold3.sif docker://ghcr.io/google-deepmind/alphafold3:latest
+
+  - name: prepare_input
+    description: Create fold_input.json for your molecular system
+    notes: >
+      Input JSON format documented at:
+      https://github.com/google-deepmind/alphafold3/blob/main/docs/input.md
+      For protein sequences, use standard single-letter amino acid codes.
+      For ligands, provide SMILES strings. For multimers, list each chain.
+    example: |
+      {
+        "name": "my_protein_ligand",
+        "sequences": [
+          {
+            "protein": {
+              "id": "A",
+              "sequence": "MKTAYIAKQRQISFVKSHFSRQLEERLGLIEVQAPILSRVGDGTQDNLSGAEKAVQVKVKALPDAQFEVVHSLAKWKRQTLGQHDFSAGEGLYTHMKALRPDEDRLSPLHSVYVDQWDWERVMGDGERQFSTLKSTVEAIWAGIKATEAAVSEEFGLAPFLPDQIHFVHSQELLSRYPDLDAKGRERAIAKDLGAVFLVGIGGKLSDGHRHDVRAPDYDDWSTPSELGHAGLNGDILVWNPVLEDAFELSSMGIRVDADTLKHQLALTGDEDRLELEWHQALLRGEMPQTIGGGIGQSRLTMLLLQLPHIGQVQAGVWPAAVRESVPSLL"
+            }
+          },
+          {
+            "ligand": {
+              "id": "B",
+              "smiles": "CC1=CC=CC=C1"
+            }
+          }
+        ],
+        "modelSeeds": [42],
+        "dialect": "alphafold3",
+        "version": 2
+      }
+
+  - name: stage1_data_pipeline
+    description: >
+      Run MSA construction and template search (CPU-only, no GPU required).
+      Submit to CPU partition on Nexus. Cache results for reuse.
+    commands:
+      - |
+        apptainer exec \
+          --bind /path/to/af3_databases:/databases \
+          --bind /path/to/af3_model_parameters:/models \
+          --bind $PWD:/workdir \
+          alphafold3.sif \
+          python /app/alphafold3/run_alphafold.py \
+            --json_path=/workdir/fold_input.json \
+            --model_dir=/models \
+            --db_dir=/databases \
+            --output_dir=/workdir/output \
+            --run_data_pipeline=true \
+            --run_inference=false \
+            --jackhmmer_n_cpu=8 \
+            --nhmmer_n_cpu=8
+
+  - name: stage2_model_inference
+    description: >
+      Run GPU diffusion inference on pre-computed MSA (requires A100/H100 80 GB).
+      Submit to GPU partition. Completes in minutes once MSA is cached.
+    commands:
+      - |
+        apptainer exec --nv \
+          --bind /path/to/af3_databases:/databases \
+          --bind /path/to/af3_model_parameters:/models \
+          --bind $PWD:/workdir \
+          alphafold3.sif \
+          python /app/alphafold3/run_alphafold.py \
+            --json_path=/workdir/fold_input.json \
+            --model_dir=/models \
+            --db_dir=/databases \
+            --output_dir=/workdir/output \
+            --run_data_pipeline=false \
+            --run_inference=true \
+            --flash_attention_implementation=triton
+
+  - name: visualize
+    description: (Optional) Visualize predicted structure in PyMOL or ChimeraX
+    notes: >
+      Load model.cif directly in PyMOL or ChimeraX. Color by pLDDT using the
+      B-factor column (pLDDT is stored in the B-factor field of the mmCIF file).
+      High confidence: pLDDT > 90 (dark blue). Low confidence: pLDDT < 50 (orange/red).
+
+resource_requirements:
+  stage1_data_pipeline:
+    gpu: false
+    cpu_cores: 12           # minimum; 128 for maximally parallel shard-based search
+    ram_gb: 64              # minimum; 170 GB recommended for deep MSA targets
+    estimated_runtime: "30 min – 4 hours depending on sequence length and CPU count"
+    notes: >
+      Runtime scales strongly with database search CPU parallelism. Use
+      --jackhmmer_max_parallel_shards and --nhmmer_max_parallel_shards to
+      exploit more CPU cores if available.
+
+  stage2_model_inference:
+    gpu: true
+    gpu_model: NVIDIA A100 80 GB or H100 80 GB
+    gpu_memory_gb: 80
+    gpu_count: 1
+    cpu_cores: 8
+    ram_gb: 32
+    estimated_runtime_typical: "5–15 min for single protein < 1000 residues on A100 80 GB"
+    estimated_runtime_large: "30–90 min for complexes near 5120 token limit on A100 80 GB"
+    compute_capability_minimum: "8.0"
+    notes: >
+      A100 and H100 80 GB are officially verified for numerical accuracy.
+      RTX 6000 Ada (48 GB, CC 8.9) can run smaller inputs; large complexes
+      will OOM. No multi-GPU parallelism supported in current release.
+
+  storage:
+    databases_gb: ~1000   # SSD strongly recommended
+    model_parameters_gb: ~1
+    output_per_prediction_gb: "<0.1"
+
+compatible_resource_profiles:
+  - resource-profiles/nexus/nexus-a100.yaml
+  - resource-profiles/nexus/nexus-h100.yaml
+  - resource-profiles/nexus/nexus-rtx6000.yaml   # small inputs only
+
+slurm_example_stage1: |
+  #!/bin/bash
+  #SBATCH --job-name=af3-data-pipeline
+  #SBATCH --partition=cpu
+  #SBATCH --ntasks=1
+  #SBATCH --cpus-per-task=32
+  #SBATCH --mem=128G
+  #SBATCH --time=06:00:00
+  #SBATCH --output=logs/af3-stage1-%j.out
+
+  module load apptainer
+
+  apptainer exec \
+    --bind /shared/af3_databases:/databases \
+    --bind /shared/af3_model_parameters:/models \
+    --bind $PWD:/workdir \
+    alphafold3.sif \
+    python /app/alphafold3/run_alphafold.py \
+      --json_path=/workdir/fold_input.json \
+      --model_dir=/models \
+      --db_dir=/databases \
+      --output_dir=/workdir/output \
+      --run_data_pipeline=true \
+      --run_inference=false \
+      --jackhmmer_n_cpu=8 \
+      --jackhmmer_max_parallel_shards=4
+
+slurm_example_stage2: |
+  #!/bin/bash
+  #SBATCH --job-name=af3-inference
+  #SBATCH --partition=gpu
+  #SBATCH --gres=gpu:a100:1
+  #SBATCH --ntasks=1
+  #SBATCH --cpus-per-task=8
+  #SBATCH --mem=64G
+  #SBATCH --time=02:00:00
+  #SBATCH --output=logs/af3-stage2-%j.out
+  #SBATCH --dependency=afterok:<stage1_job_id>
+
+  module load apptainer
+
+  apptainer exec --nv \
+    --bind /shared/af3_databases:/databases \
+    --bind /shared/af3_model_parameters:/models \
+    --bind $PWD:/workdir \
+    alphafold3.sif \
+    python /app/alphafold3/run_alphafold.py \
+      --json_path=/workdir/fold_input.json \
+      --model_dir=/models \
+      --db_dir=/databases \
+      --output_dir=/workdir/output \
+      --run_data_pipeline=false \
+      --run_inference=true \
+      --flash_attention_implementation=triton
+
+notes: >
+  The SLURM --dependency=afterok: directive chains Stage 2 to run automatically
+  after Stage 1 completes. Capture the Stage 1 job ID with:
+    stage1_id=$(sbatch --parsable af3_stage1.sh)
+    sbatch --dependency=afterok:$stage1_id af3_stage2.sh
+
+  For high-throughput batch prediction across many inputs, generate one
+  fold_input.json per target and submit as a SLURM array for Stage 1,
+  then a dependent array for Stage 2.
+
+  Compliance reminder: All outputs must cite Abramson et al., Nature (2024).
+  Outputs cannot be used to train biomolecular structure prediction models.
+  See OUTPUT_TERMS_OF_USE.md in the AlphaFold 3 repository.
