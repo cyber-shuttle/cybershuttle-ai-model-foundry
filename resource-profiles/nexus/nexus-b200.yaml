@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=../../../schemas/resource_profile.schema.json
+
+id: nexus-b200
+name: Nexus B200 GPU partition
+system: nexus
+partition: gpu-b200
+
+gpu:
+  model: NVIDIA B200
+  count: 8
+  vram_gb: 192
+  interconnect: NVLink
+
+cpu:
+  cores: 128
+  ram_gb: 1024
+
+storage:
+  scratch_gb: 10000
+  parallel_fs: GPFS
+
+max_walltime_hours: 48
+scheduler: slurm
+
+notes: >
+  Flagship Nexus partition for large-scale training and inference. FP8 and BF16
+  supported natively. NCCL and NVLink enable efficient multi-GPU workloads.
+  Request via Nexus allocation system; contact Nexus support for large-scale jobs
+  exceeding 48h or requiring > 1 node.

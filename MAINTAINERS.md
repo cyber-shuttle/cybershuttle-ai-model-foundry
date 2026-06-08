@@ -18,22 +18,14 @@ Core maintainers have repository-wide merge access and are responsible for schem
 
 ## Domain maintainers
 
-Domain maintainers have merge access scoped to a specific registry domain or infrastructure area. This section will be populated as the community grows and domain stewards are identified.
+Domain maintainers have merge access scoped to a specific registry domain or
+infrastructure area.
 
 | Name | GitHub | Affiliation | Domain / Area |
-|---|---|---|---|
-| *(open — biology)* | | | `registry/models/biology/` |
-| *(open — chemistry)* | | | `registry/models/chemistry/` |
-| *(open — genomics)* | | | `registry/models/genomics/` |
-| *(open — weather-climate)* | | | `registry/models/weather-climate/` |
-| *(open — mechanics-materials)* | | | `registry/models/mechanics-materials/` |
-| *(open — speech-language)* | | | `registry/models/speech-language/` |
-| *(open — vision)* | | | `registry/models/vision/` |
-| *(open — workflows)* | | | `workflows/`, `recipes/` |
-| *(open — benchmarks)* | | | `benchmarks/` |
-| *(open — schemas/tooling)* | | | `tools/`, `schemas/` |
+| ---- | ------ | ----------- | ------------- |
+| *(open — seeking domain stewards)* | | | See [Becoming a maintainer](GOVERNANCE.md#becoming-a-maintainer) |
 
-To take on a domain, see [Becoming a maintainer](GOVERNANCE.md#becoming-a-maintainer) in GOVERNANCE.md.
+To take on a domain, open a GitHub issue tagged `governance`.
 
 ---
 

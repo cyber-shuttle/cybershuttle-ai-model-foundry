@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=../../../../schemas/model.schema.json
+
+id: esm2
+name: ESM-2
+description: >
+  Protein language model family from Meta AI, ranging from 8M to 15B parameters,
+  trained on UniRef50. Supports protein sequence embedding, property prediction,
+  and structure-informed fine-tuning. Available via BioNeMo Framework for
+  optimized Nexus deployment.
+
+domain:
+  - biology
+  - protein-science
+
+model_family:
+  - transformer
+  - foundation-model
+  - protein-language-model
+
+tasks:
+  - inference
+  - fine-tuning
+  - evaluation
+
+upstream:
+  huggingface: facebook/esm2_t33_650M_UR50D
+  github: https://github.com/facebookresearch/esm
+  paper: https://www.science.org/doi/10.1126/science.ade2574
+  bionemo: https://docs.nvidia.com/bionemo-framework/latest/models/esm2.html
+
+lifecycle:
+  supported_stages:
+    - inference
+    - fine-tuning
+    - evaluation
+
+datasets:
+  recommended:
+    - uniref50
+    - uniref90
+  supported:
+    - swissprot
+    - pfam
+
+resource_profiles:
+  recommended:
+    - resource-profiles/nexus/nexus-b200.yaml
+    - resource-profiles/nexus/nexus-rtx6000.yaml
+
+optimization_profiles:
+  recommended:
+    - optimization-profiles/nvidia/b200-fsdp-bf16.yaml
+
+cybershuttle:
+  enabled: true
+  workflow_templates:
+    - workflows/cybershuttle/templates/finetune-workflow.yaml.j2
+
+readiness:
+  registry_status: candidate
+  nexus_validation: untested
+  benchmark_status: not-started
+  optimization_status: not-started
+  workflow_status: candidate
+
+notes: >
+  Multiple checkpoint sizes are available: 8M, 35M, 150M, 650M, 3B, 15B parameters.
+  The 650M checkpoint (esm2_t33_650M_UR50D) is the recommended starting point for
+  most tasks. BioNeMo Framework provides optimized training and inference recipes
+  for NVIDIA GPUs. The 15B model requires multi-GPU (≥4 × 80GB) configurations.

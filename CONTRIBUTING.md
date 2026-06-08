@@ -69,12 +69,15 @@ id: esm2
 name: ESM-2
 ...
 ```
-
-Run validation before submitting:
-
-```bash
-foundry validate registry/models/biology/esm2/model.yaml
-```
+Validate the file before submitting. Until the `foundry` CLI is available,
+  use `check-jsonschema` directly:
+  ```bash
+  pip install check-jsonschema
+  check-jsonschema --schemafile schemas/model.schema.json \
+      registry/models/biology/esm2/model.yaml
+  ```
+  The CI workflow validates all registry files automatically on every pull request.
+  See [docs/cli-status.md](docs/cli-status.md) for CLI implementation status.
 
 Set `registry_status: candidate` if the entry is incomplete. Reviewers will help advance it through the readiness lifecycle.
 
